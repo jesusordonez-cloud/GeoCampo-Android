@@ -61,12 +61,22 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     var showProjectDialog by remember { mutableStateOf(false) }
     var showBasemapDialog by remember { mutableStateOf(false) }
     var showLayersDialog by remember { mutableStateOf(false) }
+    var satelliteEnabled by remember { mutableStateOf(false) }
+    var centerOnLocationToken by remember { mutableIntStateOf(0) }
     var pendingWaypoint by remember { mutableStateOf<Pair<GeoCoord, Float?>?>(null) }
     var pendingPhotoPath by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) { grants ->
+        val granted =
+            grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            vm.startLiveLocation()
+            vm.requestCurrentFix()
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -90,14 +100,35 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     }
 
     LaunchedEffect(Unit) {
-        val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
+        val fine = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        val coarse = ContextCompat.checkSelfPermission(
+            context,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        if (Build.VERSION.SDK_INT >= 33) {
-            permissions += Manifest.permission.POST_NOTIFICATIONS
+
+        if (
+            fine == PackageManager.PERMISSION_GRANTED ||
+            coarse == PackageManager.PERMISSION_GRANTED
+        ) {
+            vm.startLiveLocation()
+            vm.requestCurrentFix()
+        } else {
+            val permissions = mutableListOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+            if (Build.VERSION.SDK_INT >= 33) {
+                permissions += Manifest.permission.POST_NOTIFICATIONS
+            }
+            permissionLauncher.launch(permissions.toTypedArray())
         }
-        permissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { vm.stopLiveLocation() }
     }
 
     fun withLocationPermission(block: () -> Unit) {
@@ -212,20 +243,88 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            OfflineMapView(
-                basemap = basemap,
-                layers = layers.filter { it.visible },
-                waypoints = waypoints,
-                trackPoints = trackPoints,
-                currentFix = currentFix,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                onLongPress = { coord ->
-                    pendingPhotoPath = null
-                    pendingWaypoint = coord to null
+                    .weight(1f)
+            ) {
+                OfflineMapView(
+                    basemap = basemap,
+                    layers = layers.filter { it.visible },
+                    waypoints = waypoints,
+                    trackPoints = trackPoints,
+                    currentFix = currentFix,
+                    satelliteEnabled = satelliteEnabled,
+                    centerOnLocationToken = centerOnLocationToken,
+                    modifier = Modifier.fillMaxSize(),
+                    onLongPress = { coord ->
+                        pendingPhotoPath = null
+                        pendingWaypoint = coord to null
+                    }
+                )
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            withLocationPermission {
+                                vm.requestCurrentFix { coord, _ ->
+                                    if (coord != null) {
+                                        centerOnLocationToken++
+                                    }
+                                }
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ) {
+                        Icon(
+                            Icons.Default.MyLocation,
+                            contentDescription = "Centrar en mi ubicación",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    SmallFloatingActionButton(
+                        onClick = { satelliteEnabled = !satelliteEnabled },
+                        containerColor = if (satelliteEnabled) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.SatelliteAlt,
+                            contentDescription = "Vista satelital",
+                            tint = if (satelliteEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
                 }
-            )
+
+                if (satelliteEnabled) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(10.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                    ) {
+                        Text(
+                            "Sentinel-2 Cloudless · EOX / Copernicus · requiere internet",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
 
             Surface(tonalElevation = 2.dp) {
                 Row(
