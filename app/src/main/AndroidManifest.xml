@@ -11,6 +11,7 @@
     <application
         android:name=".GeoCampoApp"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:icon="@drawable/ic_app"
         android:label="GeoCampo"
         android:supportsRtl="true"
