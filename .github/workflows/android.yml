@@ -25,6 +25,9 @@ jobs:
         with:
           go-version: 'stable'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Android NDK
         run: |
           set -euxo pipefail
