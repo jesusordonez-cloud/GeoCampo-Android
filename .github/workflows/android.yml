@@ -25,14 +25,10 @@ jobs:
         with:
           go-version: 'stable'
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK and NDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
-        run: |
-          set -euxo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;27.0.12077973"
+        with:
+          packages: "platform-tools ndk;27.0.12077973"
 
       - name: Build PMTiles extractor for Android
         run: |
