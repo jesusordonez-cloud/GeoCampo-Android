@@ -8,8 +8,18 @@ import android.database.sqlite.SQLiteOpenHelper
 class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
+            """CREATE TABLE folders(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_id INTEGER,
+                name TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL
+            )""".trimIndent()
+        )
+        db.execSQL(
             """CREATE TABLE projects(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_id INTEGER,
                 name TEXT NOT NULL,
                 ejido TEXT NOT NULL DEFAULT '',
                 municipality TEXT NOT NULL DEFAULT '',
@@ -55,6 +65,7 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         )
         db.execSQL("CREATE INDEX idx_waypoints_project ON waypoints(project_id, ts)")
         db.execSQL("CREATE INDEX idx_tracks_project ON tracks(project_id, started_at)")
+        db.execSQL("CREATE INDEX idx_projects_folder ON projects(folder_id, created_at)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -75,13 +86,89 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
             runCatching { db.execSQL("CREATE INDEX idx_waypoints_project ON waypoints(project_id, ts)") }
             runCatching { db.execSQL("CREATE INDEX idx_tracks_project ON tracks(project_id, started_at)") }
         }
+        if (oldVersion < 3) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS folders(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    parent_id INTEGER,
+                    name TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )""".trimIndent()
+            )
+            runCatching { db.execSQL("ALTER TABLE projects ADD COLUMN folder_id INTEGER") }
+            runCatching { db.execSQL("CREATE INDEX idx_projects_folder ON projects(folder_id, created_at)") }
+        }
     }
 
     @Synchronized
-    fun insertProject(name: String, ejido: String, municipality: String, notes: String): Long {
-        return writableDatabase.insertOrThrow(
+    fun insertFolder(name: String, notes: String = "", parentId: Long? = null): Long =
+        writableDatabase.insertOrThrow(
+            "folders", null,
+            ContentValues().apply {
+                parentId?.let { put("parent_id", it) }
+                put("name", name)
+                put("notes", notes)
+                put("created_at", System.currentTimeMillis())
+            }
+        )
+
+    @Synchronized
+    fun getFolders(): List<FieldFolder> {
+        val out = mutableListOf<FieldFolder>()
+        readableDatabase.query(
+            "folders",
+            arrayOf("id", "parent_id", "name", "notes", "created_at"),
+            null, null, null, null, "name COLLATE NOCASE ASC"
+        ).use { c ->
+            while (c.moveToNext()) {
+                out += FieldFolder(
+                    id = c.getLong(0),
+                    parentId = if (c.isNull(1)) null else c.getLong(1),
+                    name = c.getString(2),
+                    notes = c.getString(3),
+                    createdAt = c.getLong(4)
+                )
+            }
+        }
+        return out
+    }
+
+    @Synchronized
+    fun deleteFolder(id: Long) {
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.update(
+                "projects",
+                ContentValues().apply { putNull("folder_id") },
+                "folder_id=?",
+                arrayOf(id.toString())
+            )
+            writableDatabase.update(
+                "folders",
+                ContentValues().apply { putNull("parent_id") },
+                "parent_id=?",
+                arrayOf(id.toString())
+            )
+            writableDatabase.delete("folders", "id=?", arrayOf(id.toString()))
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    @Synchronized
+    fun insertProject(
+        name: String,
+        ejido: String,
+        municipality: String,
+        notes: String,
+        folderId: Long? = null
+    ): Long =
+        writableDatabase.insertOrThrow(
             "projects", null,
             ContentValues().apply {
+                folderId?.let { put("folder_id", it) }
                 put("name", name)
                 put("ejido", ejido)
                 put("municipality", municipality)
@@ -89,24 +176,24 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 put("created_at", System.currentTimeMillis())
             }
         )
-    }
 
     @Synchronized
     fun getProjects(): List<FieldProject> {
         val out = mutableListOf<FieldProject>()
         readableDatabase.query(
             "projects",
-            arrayOf("id", "name", "ejido", "municipality", "notes", "created_at"),
+            arrayOf("id", "folder_id", "name", "ejido", "municipality", "notes", "created_at"),
             null, null, null, null, "created_at DESC"
         ).use { c ->
             while (c.moveToNext()) {
                 out += FieldProject(
                     id = c.getLong(0),
-                    name = c.getString(1),
-                    ejido = c.getString(2),
-                    municipality = c.getString(3),
-                    notes = c.getString(4),
-                    createdAt = c.getLong(5)
+                    folderId = if (c.isNull(1)) null else c.getLong(1),
+                    name = c.getString(2),
+                    ejido = c.getString(3),
+                    municipality = c.getString(4),
+                    notes = c.getString(5),
+                    createdAt = c.getLong(6)
                 )
             }
         }
@@ -127,8 +214,8 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     @Synchronized
-    fun startTrack(name: String, startedAt: Long = System.currentTimeMillis(), projectId: Long? = null): Long {
-        return writableDatabase.insertOrThrow(
+    fun startTrack(name: String, startedAt: Long = System.currentTimeMillis(), projectId: Long? = null): Long =
+        writableDatabase.insertOrThrow(
             "tracks", null,
             ContentValues().apply {
                 projectId?.let { put("project_id", it) }
@@ -136,7 +223,6 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 put("started_at", startedAt)
             }
         )
-    }
 
     @Synchronized
     fun stopTrack(trackId: Long, endedAt: Long = System.currentTimeMillis()) {
@@ -177,8 +263,8 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     @Synchronized
-    fun insertTrackPoint(point: TrackPoint): Long {
-        return writableDatabase.insertOrThrow(
+    fun insertTrackPoint(point: TrackPoint): Long =
+        writableDatabase.insertOrThrow(
             "track_points", null,
             ContentValues().apply {
                 put("track_id", point.trackId)
@@ -189,7 +275,6 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 put("ts", point.timestamp)
             }
         )
-    }
 
     @Synchronized
     fun getTrackPoints(trackId: Long): List<TrackPoint> {
@@ -237,8 +322,8 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         coord: GeoCoord,
         accuracy: Float?,
         photoPath: String? = null
-    ): Long {
-        return writableDatabase.insertOrThrow(
+    ): Long =
+        writableDatabase.insertOrThrow(
             "waypoints", null,
             ContentValues().apply {
                 projectId?.let { put("project_id", it) }
@@ -253,7 +338,6 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 photoPath?.let { put("photo_path", it) }
             }
         )
-    }
 
     @Synchronized
     fun getWaypoints(projectId: Long? = null, filterByProject: Boolean = false): List<Waypoint> {
@@ -293,6 +377,6 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
 
     companion object {
         private const val DB_NAME = "geocampo.db"
-        private const val DB_VERSION = 2
+        private const val DB_VERSION = 3
     }
 }
