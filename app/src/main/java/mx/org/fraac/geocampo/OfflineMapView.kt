@@ -41,6 +41,8 @@ fun OfflineMapView(
     waypoints: List<Waypoint>,
     trackPoints: List<TrackPoint>,
     currentFix: TrackPoint?,
+    satelliteEnabled: Boolean,
+    centerOnLocationToken: Int,
     modifier: Modifier = Modifier,
     onLongPress: (GeoCoord) -> Unit
 ) {
@@ -100,10 +102,11 @@ fun OfflineMapView(
         }
     }
 
-    LaunchedEffect(map, basemap?.path) {
+    LaunchedEffect(map, basemap?.path, satelliteEnabled) {
         val targetMap = map ?: return@LaunchedEffect
-        targetMap.setStyle(Style.Builder().fromJson(EMPTY_STYLE)) { style ->
-            if (basemap != null) {
+        val styleJson = if (satelliteEnabled) SATELLITE_STYLE else EMPTY_STYLE
+        targetMap.setStyle(Style.Builder().fromJson(styleJson)) { style ->
+            if (!satelliteEnabled && basemap != null) {
                 runCatching { addPmTilesBasemap(style, basemap) }
                 if (centeredBasemapPath != basemap.path) {
                     targetMap.cameraPosition = CameraPosition.Builder()
@@ -146,6 +149,16 @@ fun OfflineMapView(
                 centeredBasemapPath = "__data__"
             }
         }
+    }
+
+    LaunchedEffect(map, centerOnLocationToken, currentFix) {
+        if (centerOnLocationToken <= 0) return@LaunchedEffect
+        val targetMap = map ?: return@LaunchedEffect
+        val fix = currentFix ?: return@LaunchedEffect
+        targetMap.cameraPosition = CameraPosition.Builder()
+            .target(LatLng(fix.lat, fix.lon))
+            .zoom(maxOf(targetMap.cameraPosition.zoom, 16.0))
+            .build()
     }
 
     AndroidView(
@@ -415,6 +428,30 @@ private fun createLetterIcon(
 
 private fun withAlpha(color: Int, alpha: Int): Int =
     Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+
+private const val SATELLITE_STYLE =
+    """{
+      "version": 8,
+      "name": "GeoCampo satélite",
+      "sources": {
+        "satellite": {
+          "type": "raster",
+          "tiles": [
+            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"
+          ],
+          "tileSize": 256,
+          "maxzoom": 14,
+          "attribution": "EOxCloudless by EOX IT Services GmbH · Contains modified Copernicus Sentinel data 2020"
+        }
+      },
+      "layers": [
+        {
+          "id": "satellite",
+          "type": "raster",
+          "source": "satellite"
+        }
+      ]
+    }"""
 
 private const val EMPTY_STYLE =
     """{
