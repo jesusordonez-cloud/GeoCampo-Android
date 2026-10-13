@@ -38,18 +38,31 @@ data class PmTilesBasemap(
     val centerZoom: Int
 ) {
     val isRaster: Boolean get() = tileType in 2..5
+    val isVector: Boolean get() = tileType == 1
 }
 
 enum class WaypointCategory(val label: String, val glyph: String) {
     OBSERVATION("Observación", "O"),
-    TREE("Árbol / vegetación", "T"),
-    WATER("Agua", "W"),
+    TREE("Árbol / vegetación", "V"),
+    WATER("Agua / aguada", "A"),
+    CENOTE("Cenote", "C"),
     INFRASTRUCTURE("Infraestructura", "I"),
-    ACCESS("Acceso", "A"),
+    ACCESS("Acceso / camino", "R"),
+    FIREBREAK("Brecha corta fuego", "B"),
+    WILDLIFE("Fauna / evidencia", "F"),
     PHOTO("Fotografía", "P"),
     HAZARD("Riesgo", "!"),
+    BOUNDARY("Límite / mojonera", "L"),
     OTHER("Otro", "+")
 }
+
+data class FieldFolder(
+    val id: Long,
+    val parentId: Long?,
+    val name: String,
+    val notes: String,
+    val createdAt: Long
+)
 
 data class FieldProject(
     val id: Long,
@@ -57,7 +70,8 @@ data class FieldProject(
     val ejido: String,
     val municipality: String,
     val notes: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val folderId: Long? = null
 ) {
     val displayName: String get() = ejido.ifBlank { name }
 }
