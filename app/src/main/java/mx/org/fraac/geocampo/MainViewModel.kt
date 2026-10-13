@@ -38,10 +38,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _basemap = MutableStateFlow<PmTilesBasemap?>(null)
     val basemap = _basemap.asStateFlow()
 
+    private val _folders = MutableStateFlow<List<FieldFolder>>(emptyList())
+    val folders = _folders.asStateFlow()
+
     private val _projects = MutableStateFlow<List<FieldProject>>(emptyList())
     val projects = _projects.asStateFlow()
 
-    private val _activeProjectId = MutableStateFlow<Long?>(prefs.getLong(KEY_ACTIVE_PROJECT, -1L).takeIf { it > 0 })
+    private val _activeProjectId = MutableStateFlow<Long?>(
+        prefs.getLong(KEY_ACTIVE_PROJECT, -1L).takeIf { it > 0 }
+    )
     val activeProjectId = _activeProjectId.asStateFlow()
 
     private val _waypoints = MutableStateFlow<List<Waypoint>>(emptyList())
@@ -69,8 +74,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refreshFiles()
+        refreshFolders()
         refreshProjects()
         refreshProjectData()
+
         viewModelScope.launch {
             TrackingBus.points.collect { point ->
                 if (TrackingBus.state.value.trackId == point.trackId) {
@@ -80,6 +87,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+
         viewModelScope.launch {
             TrackingBus.state.collect { state ->
                 val id = state.trackId
@@ -92,18 +100,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun activeProject(): FieldProject? = _projects.value.firstOrNull { it.id == _activeProjectId.value }
+    fun activeProject(): FieldProject? =
+        _projects.value.firstOrNull { it.id == _activeProjectId.value }
 
     fun importUris(uris: List<Uri>) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { importer.importUris(uris) }
             _layers.value = result.layers
             _basemap.value = result.basemap
-            val vectorWarning = result.basemap?.takeIf { !it.isRaster }?.let {
-                "PMTiles vectorial detectado. Esta versión carga PMTiles raster; para vectorial falta asociar un estilo."
+            _message.value = result.warnings.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                ?: if (result.basemap != null) "Mapa base offline cargado" else "Archivos importados correctamente"
+        }
+    }
+
+    fun downloadPmTiles(url: String, name: String) {
+        if (url.isBlank()) {
+            _message.value = "Pega un enlace directo HTTPS a un archivo .pmtiles"
+            return
+        }
+        viewModelScope.launch {
+            _message.value = "Descargando mapa base…"
+            runCatching {
+                withContext(Dispatchers.IO) { importer.downloadPmTiles(url.trim(), name.trim()) }
+            }.onSuccess { result ->
+                _layers.value = result.layers
+                _basemap.value = result.basemap
+                _message.value = "Mapa base descargado. Ya puede utilizarse sin conexión."
+            }.onFailure {
+                _message.value = "No se pudo descargar el mapa: ${it.message ?: "error desconocido"}"
             }
-            _message.value = (result.warnings + listOfNotNull(vectorWarning)).takeIf { it.isNotEmpty() }?.joinToString("\n")
-                ?: "Archivos importados correctamente"
         }
     }
 
@@ -123,17 +148,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { importer.deleteBasemap(base) }
             _basemap.value = null
+            _message.value = "Mapa base eliminado del dispositivo"
         }
     }
 
-    fun createProject(name: String, ejido: String, municipality: String, notes: String) {
+    fun createFolder(name: String, notes: String = "", parentId: Long? = null) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { db.insertFolder(name.trim(), notes.trim(), parentId) }
+            refreshFolders()
+            _message.value = "Carpeta creada"
+        }
+    }
+
+    fun deleteFolder(id: Long) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { db.deleteFolder(id) }
+            refreshFolders()
+            refreshProjects()
+            _message.value = "Carpeta eliminada; los proyectos se conservaron"
+        }
+    }
+
+    fun createProject(
+        name: String,
+        ejido: String,
+        municipality: String,
+        notes: String,
+        folderId: Long? = null
+    ) {
         if (name.isBlank() && ejido.isBlank()) {
             _message.value = "Indica al menos el nombre del proyecto o del ejido"
             return
         }
         viewModelScope.launch {
             val id = withContext(Dispatchers.IO) {
-                db.insertProject(name.ifBlank { ejido }, ejido, municipality, notes)
+                db.insertProject(name.ifBlank { ejido }, ejido, municipality, notes, folderId)
             }
             refreshProjects()
             setActiveProject(id)
@@ -157,7 +207,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (_activeProjectId.value == id) setActiveProject(null)
             refreshProjects()
             refreshProjectData()
-            _message.value = "Proyecto eliminado; sus datos quedaron como 'Sin proyecto'"
+            _message.value = "Proyecto eliminado; sus puntos y recorridos quedaron en 'Sin proyecto'"
         }
     }
 
@@ -165,7 +215,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (TrackingBus.state.value.isTracking) return
         viewModelScope.launch(Dispatchers.IO) {
             val started = System.currentTimeMillis()
-            val name = "Recorrido " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(started))
+            val name = "Recorrido " +
+                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(started))
             val id = db.startTrack(name, started, _activeProjectId.value)
             withContext(Dispatchers.Main) {
                 _trackPoints.value = emptyList()
@@ -181,7 +232,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopTracking() {
-        context.startService(Intent(context, TrackRecorderService::class.java).setAction(TrackRecorderService.ACTION_STOP))
+        context.startService(
+            Intent(context, TrackRecorderService::class.java)
+                .setAction(TrackRecorderService.ACTION_STOP)
+        )
     }
 
     fun loadTrack(id: Long) {
@@ -208,17 +262,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun requestCurrentFix(onResult: (GeoCoord?, Float?) -> Unit = { _, _ -> }) {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
+        if (
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
         ) {
             onResult(null, null)
             return
         }
+
         val token = CancellationTokenSource()
         fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, token.token)
             .addOnSuccessListener { loc: Location? ->
                 if (loc == null) {
-                    _message.value = "No fue posible obtener una posición GPS. Verifica que la ubicación esté encendida."
+                    _message.value =
+                        "No fue posible obtener una posición GPS. Verifica que la ubicación esté encendida."
                     onResult(null, null)
                 } else {
                     val point = TrackPoint(
@@ -249,10 +308,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                db.insertWaypoint(_activeProjectId.value, title.ifBlank { category.label }, note, category, coord, accuracy, photoPath)
+                db.insertWaypoint(
+                    _activeProjectId.value,
+                    title.ifBlank { category.label },
+                    note,
+                    category,
+                    coord,
+                    accuracy,
+                    photoPath
+                )
             }
             refreshWaypoints()
-            _message.value = if (photoPath != null) "Ubicación y evidencia fotográfica guardadas" else "Ubicación georreferenciada"
+            _message.value =
+                if (photoPath != null) "Punto y evidencia fotográfica guardados"
+                else "Ubicación georreferenciada"
         }
     }
 
@@ -271,7 +340,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun createEvidencePhoto(): Pair<Uri, String> {
         val dir = File(context.filesDir, "evidence").apply { mkdirs() }
         val file = File(dir, "IMG_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
         return uri to file.absolutePath
     }
 
@@ -287,7 +360,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun exportProject(uri: Uri, format: ExportFormat) {
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { exporter.export(uri, format, _activeProjectId.value) }
+                withContext(Dispatchers.IO) {
+                    exporter.export(uri, format, _activeProjectId.value)
+                }
             }.onSuccess { count ->
                 _message.value = "Exportación ${format.label} creada ($count elementos)"
             }.onFailure {
@@ -298,25 +373,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun exportSuggestedName(format: ExportFormat): String {
         val base = activeProject()?.displayName?.ifBlank { "proyecto" } ?: "sin_proyecto"
-        val safe = base.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9áéíóúñ_-]+"), "_").trim('_')
-        return "geocampo_${safe.ifBlank { "export" }}_${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.${format.extension}"
+        val safe = base.lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9áéíóúñ_-]+"), "_")
+            .trim('_')
+        return "geocampo_${safe.ifBlank { "export" }}_" +
+            "${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.${format.extension}"
     }
 
-    fun clearMessage() { _message.value = null }
+    fun clearMessage() {
+        _message.value = null
+    }
 
     private fun refreshFiles() {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { importer.loadAll() }
             _layers.value = result.layers
             _basemap.value = result.basemap
-            if (result.warnings.isNotEmpty()) _message.value = result.warnings.joinToString("\n")
+            if (result.warnings.isNotEmpty()) {
+                _message.value = result.warnings.joinToString("\n")
+            }
+        }
+    }
+
+    private fun refreshFolders() {
+        viewModelScope.launch {
+            _folders.value = withContext(Dispatchers.IO) { db.getFolders() }
         }
     }
 
     private fun refreshProjects() {
         viewModelScope.launch {
             _projects.value = withContext(Dispatchers.IO) { db.getProjects() }
-            if (_activeProjectId.value != null && _projects.value.none { it.id == _activeProjectId.value }) {
+            if (
+                _activeProjectId.value != null &&
+                _projects.value.none { it.id == _activeProjectId.value }
+            ) {
                 setActiveProject(null)
             }
         }
