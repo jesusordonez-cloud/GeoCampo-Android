@@ -55,8 +55,12 @@ class SatelliteOfflineManager(private val context: Context) {
     ): PmTilesBasemap = withContext(Dispatchers.IO) {
         validate(request)
 
+        val sourceYear = resolveSourceYear(request)
         val tiles = enumerateTiles(request)
-        require(tiles.isNotEmpty()) { "No se encontraron teselas para el área seleccionada." }
+
+        require(tiles.isNotEmpty()) {
+            "No se encontraron teselas para el área seleccionada."
+        }
         require(tiles.size <= MAX_TILE_COUNT) {
             "El área generaría ${tiles.size} teselas. Reduce el área o el nivel de zoom."
         }
@@ -75,7 +79,7 @@ class SatelliteOfflineManager(private val context: Context) {
         val db = SQLiteDatabase.openOrCreateDatabase(mbtiles, null)
         try {
             createMbtilesSchema(db)
-            insertMetadata(db, request)
+            insertMetadata(db, request, sourceYear)
 
             val semaphore = Semaphore(4)
             var completed = 0
@@ -87,7 +91,7 @@ class SatelliteOfflineManager(private val context: Context) {
                     batch.map { tile ->
                         async(Dispatchers.IO) {
                             semaphore.withPermit {
-                                tile to downloadTile(tile)
+                                tile to downloadTile(tile, sourceYear)
                             }
                         }
                     }.awaitAll()
@@ -135,35 +139,15 @@ class SatelliteOfflineManager(private val context: Context) {
             "No se encontró el convertidor PMTiles en este dispositivo."
         }
 
-        val process = ProcessBuilder(
-            binary.absolutePath,
-            "convert",
-            mbtiles.absolutePath,
-            target.absolutePath
-        )
-            .redirectErrorStream(true)
-            .start()
-
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        val exit = process.waitFor()
+        convertMbtiles(binary, mbtiles, target)
         mbtiles.delete()
-
-        if (exit != 0) {
-            target.delete()
-            error(
-                "No se pudo crear el archivo satelital offline. " +
-                    output.lineSequence()
-                        .filter { it.isNotBlank() }
-                        .toList()
-                        .takeLast(8)
-                        .joinToString(" ")
-            )
-        }
 
         require(target.exists() && target.length() > 127L) {
             target.delete()
             "La conversión terminó sin producir un PMTiles válido."
         }
+
+        verifyPmtiles(binary, target)
 
         val parsed = PmTilesParser.read(target)
         require(parsed.isRaster) {
@@ -253,14 +237,18 @@ class SatelliteOfflineManager(private val context: Context) {
         )
     }
 
-    private fun insertMetadata(db: SQLiteDatabase, request: SatelliteRegionRequest) {
+    private fun insertMetadata(
+        db: SQLiteDatabase,
+        request: SatelliteRegionRequest,
+        sourceYear: Int
+    ) {
         val centerLon = (request.west + request.east) / 2.0
         val centerLat = (request.south + request.north) / 2.0
         val values = linkedMapOf(
             "name" to request.name,
             "type" to "baselayer",
             "version" to "1.0",
-            "description" to "GeoCampo Sentinel-2 Cloudless 2025 offline",
+            "description" to "GeoCampo Sentinel-2 Cloudless ${sourceYear} offline",
             "format" to "jpg",
             "bounds" to String.format(
                 Locale.US,
@@ -279,8 +267,9 @@ class SatelliteOfflineManager(private val context: Context) {
             ),
             "minzoom" to "0",
             "maxzoom" to request.maxZoom.toString(),
-            "attribution" to ATTRIBUTION
+            "attribution" to attributionFor(sourceYear)
         )
+
         values.forEach { (key, value) ->
             db.insertOrThrow(
                 "metadata",
@@ -307,28 +296,29 @@ class SatelliteOfflineManager(private val context: Context) {
         )
     }
 
-    private fun downloadTile(tile: Tile): ByteArray? {
-        val url =
-            "https://tiles.maps.eox.at/wmts/1.0.0/" +
-                "s2cloudless-2025_3857/default/g/${tile.z}/${tile.y}/${tile.x}.jpg"
-
+    private fun downloadTile(tile: Tile, year: Int): ByteArray? {
+        val url = tileUrl(tile, year)
         var lastError: Exception? = null
+
         repeat(3) { attempt ->
             try {
                 val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 20_000
                     readTimeout = 35_000
                     instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "GeoCampo/0.4.4 Android")
+                    setRequestProperty("User-Agent", "GeoCampo/0.4.5 Android")
                     setRequestProperty("Accept", "image/jpeg,image/*")
                 }
+
                 try {
                     val code = connection.responseCode
                     if (code == 404 || code == 204) return null
+
                     if (code == 429 || code >= 500) {
-                        Thread.sleep(500L * (attempt + 1))
+                        Thread.sleep(600L * (attempt + 1))
                         return@repeat
                     }
+
                     require(code in 200..299) { "HTTP $code" }
                     return connection.inputStream.use { it.readBytes() }
                 } finally {
@@ -336,16 +326,121 @@ class SatelliteOfflineManager(private val context: Context) {
                 }
             } catch (e: Exception) {
                 lastError = e
-                if (attempt < 2) Thread.sleep(450L * (attempt + 1))
+                if (attempt < 2) {
+                    Thread.sleep(500L * (attempt + 1))
+                }
             }
         }
+
         throw lastError ?: IllegalStateException("No se pudo descargar la tesela")
     }
+
+    private fun resolveSourceYear(request: SatelliteRegionRequest): Int {
+        val centerLon = (request.west + request.east) / 2.0
+        val centerLat = (request.south + request.north) / 2.0
+        val z = min(request.maxZoom, 10)
+        val tile = Tile(
+            z = z,
+            x = lonToTileX(centerLon, z),
+            y = latToTileY(centerLat, z)
+        )
+
+        for (year in listOf(2025, 2024)) {
+            try {
+                val connection = (URL(tileUrl(tile, year)).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 12_000
+                    readTimeout = 15_000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "GeoCampo/0.4.5 Android")
+                    setRequestProperty("Accept", "image/jpeg,image/*")
+                    setRequestProperty("Range", "bytes=0-1023")
+                }
+
+                try {
+                    val code = connection.responseCode
+                    if (code in 200..299 || code == 206) {
+                        connection.inputStream.use { input ->
+                            val probe = ByteArray(32)
+                            if (input.read(probe) > 0) return year
+                        }
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            } catch (_: Exception) {
+                // Try the previous published mosaic.
+            }
+        }
+
+        error(
+            "No fue posible acceder a la fuente satelital EOX. " +
+                "Verifica tu conexión a internet antes de iniciar la descarga."
+        )
+    }
+
+    private fun convertMbtiles(binary: File, mbtiles: File, target: File) {
+        val process = ProcessBuilder(
+            binary.absolutePath,
+            "convert",
+            mbtiles.absolutePath,
+            target.absolutePath
+        )
+            .redirectErrorStream(true)
+            .start()
+
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val exit = process.waitFor()
+
+        if (exit != 0) {
+            target.delete()
+            error(
+                "No se pudo crear el archivo satelital offline. " +
+                    output.lineSequence()
+                        .filter { it.isNotBlank() }
+                        .toList()
+                        .takeLast(8)
+                        .joinToString(" ")
+            )
+        }
+    }
+
+    private fun verifyPmtiles(binary: File, target: File) {
+        val process = ProcessBuilder(
+            binary.absolutePath,
+            "verify",
+            target.absolutePath
+        )
+            .redirectErrorStream(true)
+            .start()
+
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val exit = process.waitFor()
+
+        if (exit != 0) {
+            target.delete()
+            error(
+                "El archivo satelital se generó, pero no pasó la verificación PMTiles. " +
+                    output.lineSequence()
+                        .filter { it.isNotBlank() }
+                        .toList()
+                        .takeLast(6)
+                        .joinToString(" ")
+            )
+        }
+    }
+
+    private fun tileUrl(tile: Tile, year: Int): String =
+        "https://tiles.maps.eox.at/wmts/1.0.0/" +
+            "s2cloudless-${year}_3857/default/g/${tile.z}/${tile.y}/${tile.x}.jpg"
 
     companion object {
         const val ATTRIBUTION =
             "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH " +
-                "(Contains modified Copernicus Sentinel data 2025)"
+                "(Contains modified Copernicus Sentinel data)"
+
+        fun attributionFor(year: Int): String =
+            "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH " +
+                "(Contains modified Copernicus Sentinel data ${year})"
 
         private const val MAX_TILE_COUNT = 9_000
     }
