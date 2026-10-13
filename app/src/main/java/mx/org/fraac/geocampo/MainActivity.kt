@@ -55,6 +55,8 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     val currentFix by vm.currentFix.collectAsState()
     val tracking by vm.trackingState.collectAsState()
     val message by vm.message.collectAsState()
+    val mapDownloadActive by vm.mapDownloadActive.collectAsState()
+    val mapDownloadStatus by vm.mapDownloadStatus.collectAsState()
 
     var showProjectDialog by remember { mutableStateOf(false) }
     var showBasemapDialog by remember { mutableStateOf(false) }
@@ -246,12 +248,20 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     }
 
     if (showBasemapDialog) {
-        BasemapDialog(
+        OfflineRegionDialog(
             basemap = basemap,
+            currentFix = currentFix,
+            busy = mapDownloadActive,
+            status = mapDownloadStatus,
             onDismiss = { showBasemapDialog = false },
             onImport = { basemapImportLauncher.launch(arrayOf("*/*")) },
-            onDownload = vm::downloadPmTiles,
-            onDelete = vm::deleteBasemap
+            onDelete = vm::deleteBasemap,
+            onRequestFix = {
+                withLocationPermission {
+                    vm.requestCurrentFix()
+                }
+            },
+            onExtract = vm::extractOfflineRegion
         )
     }
 
