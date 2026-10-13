@@ -6,11 +6,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.net.Uri
+import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -32,6 +36,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val regionExtractor = NativePmtilesExtractor(context)
     private val fused = LocationServices.getFusedLocationProviderClient(context)
     private val prefs = context.getSharedPreferences("geocampo_preferences", 0)
+
+    private var liveLocationStarted = false
+    private val liveLocationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            val loc = result.lastLocation ?: return
+            _currentFix.value = TrackPoint(
+                trackId = -1,
+                lat = loc.latitude,
+                lon = loc.longitude,
+                altitude = if (loc.hasAltitude()) loc.altitude else null,
+                accuracy = if (loc.hasAccuracy()) loc.accuracy else null,
+                timestamp = System.currentTimeMillis()
+            )
+        }
+    }
 
     private val _layers = MutableStateFlow<List<MapLayer>>(emptyList())
     val layers = _layers.asStateFlow()
@@ -318,6 +337,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun startLiveLocation() {
+        if (liveLocationStarted) return
+        if (
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            5_000L
+        )
+            .setMinUpdateIntervalMillis(2_000L)
+            .setMinUpdateDistanceMeters(2f)
+            .build()
+
+        fused.requestLocationUpdates(
+            request,
+            liveLocationCallback,
+            Looper.getMainLooper()
+        )
+        liveLocationStarted = true
+    }
+
+    fun stopLiveLocation() {
+        if (!liveLocationStarted) return
+        fused.removeLocationUpdates(liveLocationCallback)
+        liveLocationStarted = false
+    }
+
     fun requestCurrentFix(onResult: (GeoCoord?, Float?) -> Unit = { _, _ -> }) {
         if (
             ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
@@ -489,6 +539,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 db.getTracks(_activeProjectId.value, filterByProject = true)
             }
         }
+    }
+
+    override fun onCleared() {
+        stopLiveLocation()
+        super.onCleared()
     }
 
     companion object {
