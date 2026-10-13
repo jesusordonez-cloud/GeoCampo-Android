@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -19,6 +19,39 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build PMTiles extractor for Android
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/go-pmtiles
+          git clone --depth 1 https://github.com/protomaps/go-pmtiles.git /tmp/go-pmtiles
+
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          mkdir -p app/src/main/jniLibs/armeabi-v7a
+          mkdir -p app/src/main/jniLibs/x86_64
+
+          cd /tmp/go-pmtiles
+
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" \
+            -o "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libpmtiles.so" .
+
+          GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" \
+            -o "$GITHUB_WORKSPACE/app/src/main/jniLibs/armeabi-v7a/libpmtiles.so" .
+
+          GOOS=android GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" \
+            -o "$GITHUB_WORKSPACE/app/src/main/jniLibs/x86_64/libpmtiles.so" .
+
+          chmod +x "$GITHUB_WORKSPACE"/app/src/main/jniLibs/*/libpmtiles.so
+          file "$GITHUB_WORKSPACE"/app/src/main/jniLibs/*/libpmtiles.so
+          ls -lh "$GITHUB_WORKSPACE"/app/src/main/jniLibs/*/libpmtiles.so
 
       - name: Setup Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
@@ -31,6 +64,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GeoCampo-v0.3-debug-apk
+          name: GeoCampo-v0.4-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
