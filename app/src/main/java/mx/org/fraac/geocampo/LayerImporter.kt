@@ -38,6 +38,33 @@ class LayerImporter(private val context: Context) {
         return loaded.copy(warnings = loaded.warnings + warnings)
     }
 
+    fun downloadPmTiles(url: String, displayName: String): LoadResult {
+        require(url.startsWith("https://")) { "Solo se permiten enlaces HTTPS" }
+        val fileName = sanitize(displayName.ifBlank { "mapa_offline" })
+            .let { if (it.endsWith(".pmtiles", true)) it else "$it.pmtiles" }
+        val target = uniqueFile(basemapDir, "${System.currentTimeMillis()}_$fileName")
+        try {
+            val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "GeoCampo/0.3 Android")
+            }
+            connection.connect()
+            require(connection.responseCode in 200..299) {
+                "El servidor respondió HTTP ${connection.responseCode}"
+            }
+            connection.inputStream.use { input ->
+                FileOutputStream(target).use { output -> input.copyTo(output) }
+            }
+            PmTilesParser.read(target)
+        } catch (e: Exception) {
+            target.delete()
+            throw e
+        }
+        return loadAll()
+    }
+
     fun loadAll(): LoadResult {
         val warnings = mutableListOf<String>()
         val layers = layerDir.listFiles().orEmpty()
