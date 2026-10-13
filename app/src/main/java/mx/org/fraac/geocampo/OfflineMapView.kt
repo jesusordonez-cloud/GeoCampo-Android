@@ -33,6 +33,12 @@ import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.VectorSource
 
+enum class BaseMapMode {
+    MAP,
+    SATELLITE_ONLINE,
+    SATELLITE_OFFLINE
+}
+
 @Suppress("DEPRECATION")
 @Composable
 fun OfflineMapView(
@@ -41,7 +47,8 @@ fun OfflineMapView(
     waypoints: List<Waypoint>,
     trackPoints: List<TrackPoint>,
     currentFix: TrackPoint?,
-    satelliteEnabled: Boolean,
+    satelliteOffline: PmTilesBasemap?,
+    baseMapMode: BaseMapMode,
     centerOnLocationToken: Int,
     modifier: Modifier = Modifier,
     onLongPress: (GeoCoord) -> Unit
@@ -102,18 +109,27 @@ fun OfflineMapView(
         }
     }
 
-    LaunchedEffect(map, basemap?.path, satelliteEnabled) {
+    LaunchedEffect(map, basemap?.path, satelliteOffline?.path, baseMapMode) {
         val targetMap = map ?: return@LaunchedEffect
-        val styleJson = if (satelliteEnabled) SATELLITE_STYLE else EMPTY_STYLE
+        val styleJson =
+            if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) SATELLITE_STYLE
+            else EMPTY_STYLE
+
         targetMap.setStyle(Style.Builder().fromJson(styleJson)) { style ->
-            if (!satelliteEnabled && basemap != null) {
-                runCatching { addPmTilesBasemap(style, basemap) }
-                if (centeredBasemapPath != basemap.path) {
+            val activeBase = when (baseMapMode) {
+                BaseMapMode.MAP -> basemap
+                BaseMapMode.SATELLITE_OFFLINE -> satelliteOffline
+                BaseMapMode.SATELLITE_ONLINE -> null
+            }
+
+            if (activeBase != null) {
+                runCatching { addPmTilesBasemap(style, activeBase) }
+                if (centeredBasemapPath != activeBase.path) {
                     targetMap.cameraPosition = CameraPosition.Builder()
-                        .target(LatLng(basemap.centerLat, basemap.centerLon))
-                        .zoom(basemap.centerZoom.coerceIn(3, 17).toDouble())
+                        .target(LatLng(activeBase.centerLat, activeBase.centerLon))
+                        .zoom(activeBase.centerZoom.coerceIn(3, 17).toDouble())
                         .build()
-                    centeredBasemapPath = basemap.path
+                    centeredBasemapPath = activeBase.path
                 }
             }
             styleEpoch++
@@ -437,11 +453,11 @@ private const val SATELLITE_STYLE =
         "satellite": {
           "type": "raster",
           "tiles": [
-            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"
+            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
           ],
           "tileSize": 256,
           "maxzoom": 14,
-          "attribution": "EOxCloudless by EOX IT Services GmbH · Contains modified Copernicus Sentinel data 2020"
+          "attribution": "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH · Contains modified Copernicus Sentinel data 2025"
         }
       },
       "layers": [
