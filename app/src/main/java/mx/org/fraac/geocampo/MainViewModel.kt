@@ -34,6 +34,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val importer = LayerImporter(context)
     private val exporter = ProjectExporter(context, db)
     private val regionExtractor = NativePmtilesExtractor(context)
+    private val satelliteManager = SatelliteOfflineManager(context)
     private val fused = LocationServices.getFusedLocationProviderClient(context)
     private val prefs = context.getSharedPreferences("geocampo_preferences", 0)
 
@@ -97,6 +98,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _mapDownloadStatus = MutableStateFlow<String?>(null)
     val mapDownloadStatus = _mapDownloadStatus.asStateFlow()
+
+    private val _satelliteOffline = MutableStateFlow<PmTilesBasemap?>(satelliteManager.load())
+    val satelliteOffline = _satelliteOffline.asStateFlow()
+
+    private val _satelliteDownloadActive = MutableStateFlow(false)
+    val satelliteDownloadActive = _satelliteDownloadActive.asStateFlow()
+
+    private val _satelliteDownloadProgress = MutableStateFlow(0f)
+    val satelliteDownloadProgress = _satelliteDownloadProgress.asStateFlow()
+
+    private val _satelliteDownloadStatus = MutableStateFlow<String?>(null)
+    val satelliteDownloadStatus = _satelliteDownloadStatus.asStateFlow()
+
+    private val _satelliteDownloadedBytes = MutableStateFlow(0L)
+    val satelliteDownloadedBytes = _satelliteDownloadedBytes.asStateFlow()
 
     init {
         refreshFiles()
@@ -205,6 +221,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             _mapDownloadActive.value = false
+        }
+    }
+
+    fun downloadSatelliteRegion(request: SatelliteRegionRequest) {
+        if (_satelliteDownloadActive.value) {
+            _message.value = "Ya hay una descarga satelital en curso"
+            return
+        }
+
+        viewModelScope.launch {
+            _satelliteDownloadActive.value = true
+            _satelliteDownloadProgress.value = 0f
+            _satelliteDownloadedBytes.value = 0L
+            _satelliteDownloadStatus.value =
+                "Preparando satélite " + request.name + "…"
+
+            runCatching {
+                satelliteManager.download(request) { p ->
+                    _satelliteDownloadProgress.value =
+                        if (p.total <= 0) 0f
+                        else p.completed.toFloat() / p.total.toFloat()
+                    _satelliteDownloadedBytes.value = p.downloadedBytes
+                    _satelliteDownloadStatus.value =
+                        "Descargando teselas " + p.completed + " de " + p.total + "…"
+                }
+            }.onSuccess { satellite ->
+                _satelliteOffline.value = satellite
+                _satelliteDownloadProgress.value = 1f
+                _satelliteDownloadStatus.value = null
+                _message.value =
+                    "Satélite offline listo. Ya puedes usarlo sin datos ni Wi‑Fi."
+            }.onFailure { error ->
+                _satelliteDownloadStatus.value = null
+                _message.value =
+                    "No se pudo descargar el satélite offline: " +
+                    (error.message ?: "error desconocido")
+            }
+
+            _satelliteDownloadActive.value = false
+        }
+    }
+
+    fun deleteSatelliteOffline() {
+        if (_satelliteDownloadActive.value) {
+            _message.value = "Espera a que termine la descarga satelital"
+            return
+        }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { satelliteManager.deleteAll() }
+            _satelliteOffline.value = null
+            _satelliteDownloadProgress.value = 0f
+            _satelliteDownloadedBytes.value = 0L
+            _message.value = "Capa satelital offline eliminada"
         }
     }
 
