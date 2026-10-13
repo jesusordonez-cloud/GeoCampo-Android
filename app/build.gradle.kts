@@ -12,8 +12,8 @@ android {
         applicationId = "mx.org.fraac.geocampo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildFeatures { compose = true }
@@ -24,6 +24,10 @@ android {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += "**/libpmtiles.so"
+        }
         resources.excludes += setOf(
             "META-INF/DEPENDENCIES",
             "META-INF/LICENSE*",
