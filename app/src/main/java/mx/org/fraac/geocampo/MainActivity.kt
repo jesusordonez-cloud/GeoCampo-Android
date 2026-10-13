@@ -119,13 +119,27 @@ private fun GeoCampoScreen(vm: MainViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("GeoCampo")
-                        Text(
-                            projects.firstOrNull { it.id == activeProjectId }?.displayName ?: "Sin proyecto",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        ForestMark()
+                        Column {
+                            Text(
+                                "GeoCampo",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            Text(
+                                "Desarrollada por Reynaldo Ordoñez",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                projects.firstOrNull { it.id == activeProjectId }?.displayName ?: "Sin proyecto",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -342,6 +356,51 @@ private fun GeoCampoScreen(vm: MainViewModel) {
             title = { Text("GeoCampo") },
             text = { Text(text) }
         )
+    }
+}
+
+@Composable
+private fun ForestMark(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.size(42.dp),
+        shape = RoundedCornerShape(13.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        tonalElevation = 1.dp
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(6.dp)) {
+            val dark = Color(0xFF164A38)
+            val mid = Color(0xFF2F7D55)
+            val light = Color(0xFF74B98B)
+
+            fun tree(cx: Float, top: Float, width: Float, height: Float, color: Color) {
+                val crown = Path().apply {
+                    moveTo(cx, top)
+                    lineTo(cx - width / 2f, top + height * 0.72f)
+                    lineTo(cx - width * 0.18f, top + height * 0.72f)
+                    lineTo(cx - width * 0.42f, top + height)
+                    lineTo(cx + width * 0.42f, top + height)
+                    lineTo(cx + width * 0.18f, top + height * 0.72f)
+                    lineTo(cx + width / 2f, top + height * 0.72f)
+                    close()
+                }
+                drawPath(crown, color)
+                drawRect(
+                    color = dark,
+                    topLeft = Offset(cx - width * 0.08f, top + height),
+                    size = androidx.compose.ui.geometry.Size(width * 0.16f, height * 0.24f)
+                )
+            }
+
+            tree(size.width * 0.50f, size.height * 0.06f, size.width * 0.46f, size.height * 0.60f, dark)
+            tree(size.width * 0.25f, size.height * 0.30f, size.width * 0.34f, size.height * 0.46f, mid)
+            tree(size.width * 0.76f, size.height * 0.34f, size.width * 0.32f, size.height * 0.42f, light)
+
+            drawOval(
+                color = Color(0xFF1D6E57).copy(alpha = 0.25f),
+                topLeft = Offset(size.width * 0.08f, size.height * 0.82f),
+                size = androidx.compose.ui.geometry.Size(size.width * 0.84f, size.height * 0.12f)
+            )
+        }
     }
 }
 
