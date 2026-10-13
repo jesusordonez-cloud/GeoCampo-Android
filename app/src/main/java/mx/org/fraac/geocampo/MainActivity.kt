@@ -57,11 +57,17 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     val message by vm.message.collectAsState()
     val mapDownloadActive by vm.mapDownloadActive.collectAsState()
     val mapDownloadStatus by vm.mapDownloadStatus.collectAsState()
+    val satelliteOffline by vm.satelliteOffline.collectAsState()
+    val satelliteDownloadActive by vm.satelliteDownloadActive.collectAsState()
+    val satelliteDownloadProgress by vm.satelliteDownloadProgress.collectAsState()
+    val satelliteDownloadStatus by vm.satelliteDownloadStatus.collectAsState()
+    val satelliteDownloadedBytes by vm.satelliteDownloadedBytes.collectAsState()
 
     var showProjectDialog by remember { mutableStateOf(false) }
     var showBasemapDialog by remember { mutableStateOf(false) }
     var showLayersDialog by remember { mutableStateOf(false) }
-    var satelliteEnabled by remember { mutableStateOf(false) }
+    var showSatelliteOfflineDialog by remember { mutableStateOf(false) }
+    var baseMapMode by remember { mutableStateOf(BaseMapMode.MAP) }
     var centerOnLocationToken by remember { mutableIntStateOf(0) }
     var pendingWaypoint by remember { mutableStateOf<Pair<GeoCoord, Float?>?>(null) }
     var pendingPhotoPath by remember { mutableStateOf<String?>(null) }
@@ -254,7 +260,8 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     waypoints = waypoints,
                     trackPoints = trackPoints,
                     currentFix = currentFix,
-                    satelliteEnabled = satelliteEnabled,
+                    satelliteOffline = satelliteOffline,
+                    baseMapMode = baseMapMode,
                     centerOnLocationToken = centerOnLocationToken,
                     modifier = Modifier.fillMaxSize(),
                     onLongPress = { coord ->
@@ -289,8 +296,15 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     }
 
                     SmallFloatingActionButton(
-                        onClick = { satelliteEnabled = !satelliteEnabled },
-                        containerColor = if (satelliteEnabled) {
+                        onClick = {
+                            baseMapMode =
+                                if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
+                                    BaseMapMode.MAP
+                                } else {
+                                    BaseMapMode.SATELLITE_ONLINE
+                                }
+                        },
+                        containerColor = if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
                             MaterialTheme.colorScheme.surface
@@ -298,8 +312,27 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     ) {
                         Icon(
                             Icons.Default.SatelliteAlt,
-                            contentDescription = "Vista satelital",
-                            tint = if (satelliteEnabled) {
+                            contentDescription = "Satélite online",
+                            tint = if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
+
+                    SmallFloatingActionButton(
+                        onClick = { showSatelliteOfflineDialog = true },
+                        containerColor = if (baseMapMode == BaseMapMode.SATELLITE_OFFLINE) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.DownloadForOffline,
+                            contentDescription = "Descargar o usar satélite offline",
+                            tint = if (satelliteOffline != null) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.onSurface
@@ -308,7 +341,7 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     }
                 }
 
-                if (satelliteEnabled) {
+                if (baseMapMode != BaseMapMode.MAP) {
                     Surface(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -317,7 +350,11 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
                     ) {
                         Text(
-                            "Sentinel-2 Cloudless · EOX / Copernicus · requiere internet",
+                            if (baseMapMode == BaseMapMode.SATELLITE_OFFLINE) {
+                                "Sentinel-2 Cloudless 2025 · OFFLINE · EOX / Copernicus"
+                            } else {
+                                "Sentinel-2 Cloudless 2025 · ONLINE · EOX / Copernicus"
+                            },
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -375,6 +412,36 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                 }
             },
             onExtract = vm::extractOfflineRegion
+        )
+    }
+
+    if (showSatelliteOfflineDialog) {
+        SatelliteOfflineDialog(
+            satellite = satelliteOffline,
+            currentFix = currentFix,
+            busy = satelliteDownloadActive,
+            progress = satelliteDownloadProgress,
+            status = satelliteDownloadStatus,
+            downloadedBytes = satelliteDownloadedBytes,
+            onDismiss = { showSatelliteOfflineDialog = false },
+            onRequestFix = {
+                withLocationPermission {
+                    vm.requestCurrentFix()
+                }
+            },
+            onDownload = vm::downloadSatelliteRegion,
+            onDelete = {
+                vm.deleteSatelliteOffline()
+                if (baseMapMode == BaseMapMode.SATELLITE_OFFLINE) {
+                    baseMapMode = BaseMapMode.MAP
+                }
+            },
+            onUseOffline = {
+                if (satelliteOffline != null) {
+                    baseMapMode = BaseMapMode.SATELLITE_OFFLINE
+                    showSatelliteOfflineDialog = false
+                }
+            }
         )
     }
 
