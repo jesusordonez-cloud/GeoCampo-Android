@@ -66,6 +66,7 @@ class NativePmtilesExtractor(private val context: Context) {
             val detail = output
                 .lineSequence()
                 .filter { it.isNotBlank() }
+                .toList()
                 .takeLast(8)
                 .joinToString("\n")
                 .ifBlank { "Código de salida $exit" }
