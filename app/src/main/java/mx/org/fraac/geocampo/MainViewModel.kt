@@ -29,6 +29,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val db = TrackDatabase(context)
     private val importer = LayerImporter(context)
     private val exporter = ProjectExporter(context, db)
+    private val regionExtractor = NativePmtilesExtractor(context)
     private val fused = LocationServices.getFusedLocationProviderClient(context)
     private val prefs = context.getSharedPreferences("geocampo_preferences", 0)
 
@@ -71,6 +72,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+
+    private val _mapDownloadActive = MutableStateFlow(false)
+    val mapDownloadActive = _mapDownloadActive.asStateFlow()
+
+    private val _mapDownloadStatus = MutableStateFlow<String?>(null)
+    val mapDownloadStatus = _mapDownloadStatus.asStateFlow()
 
     init {
         refreshFiles()
@@ -129,6 +136,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }.onFailure {
                 _message.value = "No se pudo descargar el mapa: ${it.message ?: "error desconocido"}"
             }
+        }
+    }
+
+    fun extractOfflineRegion(
+        name: String,
+        west: Double,
+        south: Double,
+        east: Double,
+        north: Double,
+        maxZoom: Int
+    ) {
+        if (_mapDownloadActive.value) {
+            _message.value = "Ya hay una descarga de mapa en curso"
+            return
+        }
+
+        val request = OfflineRegionRequest(
+            name = name,
+            west = west,
+            south = south,
+            east = east,
+            north = north,
+            maxZoom = maxZoom
+        )
+
+        viewModelScope.launch {
+            _mapDownloadActive.value = true
+            _mapDownloadStatus.value =
+                "Preparando " + name + " · zoom 0–" + maxZoom + "…"
+            _message.value = null
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    regionExtractor.extract(request)
+                    importer.loadAll()
+                }
+            }.onSuccess { result ->
+                _layers.value = result.layers
+                _basemap.value = result.basemap
+                _mapDownloadStatus.value = null
+                _message.value =
+                    "Mapa offline listo. Ya puedes apagar datos y Wi‑Fi."
+            }.onFailure { error ->
+                _mapDownloadStatus.value = null
+                _message.value =
+                    "No se pudo preparar el mapa offline: " +
+                    (error.message ?: "error desconocido")
+            }
+
+            _mapDownloadActive.value = false
         }
     }
 
