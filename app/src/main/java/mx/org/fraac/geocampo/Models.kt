@@ -87,8 +87,10 @@ data class Waypoint(
     val altitude: Double?,
     val accuracy: Float?,
     val timestamp: Long,
-    val photoPath: String? = null
-)
+    val photoPaths: List<String> = emptyList()
+) {
+    val photoPath: String? get() = photoPaths.firstOrNull()
+}
 
 data class TrackPoint(
     val id: Long = 0,
@@ -118,8 +120,10 @@ data class LiveTrackingState(
 )
 
 enum class ExportFormat(val label: String, val extension: String, val mime: String) {
-    GEOJSON("GeoJSON", "geojson", "application/geo+json"),
     KML("KML", "kml", "application/vnd.google-earth.kml+xml"),
+    KMZ("KMZ + evidencias", "kmz", "application/vnd.google-earth.kmz"),
+    SHAPE_ZIP("Shapefile + evidencias", "zip", "application/zip"),
+    GEOJSON("GeoJSON", "geojson", "application/geo+json"),
     GPX("GPX", "gpx", "application/gpx+xml")
 }
 
