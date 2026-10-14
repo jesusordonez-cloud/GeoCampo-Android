@@ -37,6 +37,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val reportGenerator = GeoReportGenerator(context, db)
     private val regionExtractor = NativePmtilesExtractor(context)
     private val satelliteManager = SatelliteOfflineManager(context)
+    private val imagerySettings = ImagerySettings(context)
     private val fused = LocationServices.getFusedLocationProviderClient(context)
     private val prefs = context.getSharedPreferences("geocampo_preferences", 0)
 
@@ -115,6 +116,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _satelliteDownloadedBytes = MutableStateFlow(0L)
     val satelliteDownloadedBytes = _satelliteDownloadedBytes.asStateFlow()
+
+    private val _mapTilerApiKey = MutableStateFlow(imagerySettings.mapTilerKey())
+    val mapTilerApiKey = _mapTilerApiKey.asStateFlow()
+
+    private val _mapTilerPrintAllowed =
+        MutableStateFlow(imagerySettings.mapTilerPrintAllowed())
+    val mapTilerPrintAllowed = _mapTilerPrintAllowed.asStateFlow()
+
+    private val _mapTilerValidationActive = MutableStateFlow(false)
+    val mapTilerValidationActive = _mapTilerValidationActive.asStateFlow()
 
     init {
         refreshFiles()
@@ -406,6 +417,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             refreshTracks()
             _message.value = "Recorrido eliminado"
         }
+    }
+
+    fun saveMapTilerSettings(
+        apiKey: String,
+        printAllowed: Boolean,
+        onValidated: (Boolean) -> Unit = {}
+    ) {
+        if (_mapTilerValidationActive.value) return
+        viewModelScope.launch {
+            _mapTilerValidationActive.value = true
+
+            val result = imagerySettings.validateMapTilerKey(apiKey.trim())
+            result.onSuccess {
+                imagerySettings.setMapTilerKey(apiKey)
+                imagerySettings.setMapTilerPrintAllowed(printAllowed)
+                _mapTilerApiKey.value = apiKey.trim()
+                _mapTilerPrintAllowed.value = printAllowed
+                _message.value = "MapTiler HD configurado correctamente"
+                onValidated(true)
+            }.onFailure {
+                _message.value =
+                    "No se pudo validar MapTiler: " +
+                    (it.message ?: "error desconocido")
+                onValidated(false)
+            }
+
+            _mapTilerValidationActive.value = false
+        }
+    }
+
+    fun clearMapTilerSettings() {
+        imagerySettings.setMapTilerKey("")
+        imagerySettings.setMapTilerPrintAllowed(false)
+        _mapTilerApiKey.value = ""
+        _mapTilerPrintAllowed.value = false
+        _message.value = "Configuración de MapTiler eliminada"
     }
 
     fun startLiveLocation() {
