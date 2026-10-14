@@ -196,8 +196,9 @@ class GeoReportGenerator(
             "Mapa base",
             when (baseMapMode) {
                 BaseMapMode.MAP -> "Cartográfico / PMTiles"
-                BaseMapMode.SATELLITE_ONLINE -> "Satélite online + calles"
-                BaseMapMode.SATELLITE_OFFLINE -> "Satélite offline + calles"
+                BaseMapMode.SATELLITE_ONLINE -> "Sentinel-2 online + calles"
+                BaseMapMode.SATELLITE_OFFLINE -> "Sentinel-2 offline + calles"
+                BaseMapMode.MAPTILER_HD -> "MapTiler Satellite Hybrid HD"
             },
             x,
             y,
