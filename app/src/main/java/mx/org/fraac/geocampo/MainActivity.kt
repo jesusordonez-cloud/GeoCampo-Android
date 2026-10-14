@@ -63,11 +63,15 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     val satelliteDownloadProgress by vm.satelliteDownloadProgress.collectAsState()
     val satelliteDownloadStatus by vm.satelliteDownloadStatus.collectAsState()
     val satelliteDownloadedBytes by vm.satelliteDownloadedBytes.collectAsState()
+    val mapTilerApiKey by vm.mapTilerApiKey.collectAsState()
+    val mapTilerPrintAllowed by vm.mapTilerPrintAllowed.collectAsState()
+    val mapTilerValidationActive by vm.mapTilerValidationActive.collectAsState()
 
     var showProjectDialog by remember { mutableStateOf(false) }
     var showBasemapDialog by remember { mutableStateOf(false) }
     var showLayersDialog by remember { mutableStateOf(false) }
     var showSatelliteOfflineDialog by remember { mutableStateOf(false) }
+    var showImageryDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showPrintDialog by remember { mutableStateOf(false) }
@@ -340,6 +344,7 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     currentFix = currentFix,
                     satelliteOffline = satelliteOffline,
                     baseMapMode = baseMapMode,
+                    mapTilerApiKey = mapTilerApiKey,
                     centerOnLocationToken = centerOnLocationToken,
                     snapshotBridge = snapshotBridge,
                     modifier = Modifier.fillMaxSize(),
@@ -380,28 +385,33 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     }
 
                     SmallFloatingActionButton(
-                        onClick = {
-                            baseMapMode =
-                                if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
-                                    BaseMapMode.MAP
-                                } else {
-                                    BaseMapMode.SATELLITE_ONLINE
-                                }
-                        },
-                        containerColor = if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
+                        onClick = { showImageryDialog = true },
+                        containerColor =
+                            if (
+                                baseMapMode == BaseMapMode.SATELLITE_ONLINE ||
+                                baseMapMode == BaseMapMode.MAPTILER_HD
+                            ) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
                     ) {
                         Icon(
-                            Icons.Default.SatelliteAlt,
-                            contentDescription = "Satélite online",
-                            tint = if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) {
-                                MaterialTheme.colorScheme.primary
+                            if (baseMapMode == BaseMapMode.MAPTILER_HD) {
+                                Icons.Default.Hd
                             } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
+                                Icons.Default.SatelliteAlt
+                            },
+                            contentDescription = "Proveedor satelital",
+                            tint =
+                                if (
+                                    baseMapMode == BaseMapMode.SATELLITE_ONLINE ||
+                                    baseMapMode == BaseMapMode.MAPTILER_HD
+                                ) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
                         )
                     }
 
@@ -434,10 +444,14 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
                     ) {
                         Text(
-                            if (baseMapMode == BaseMapMode.SATELLITE_OFFLINE) {
-                                "Sentinel-2 Cloudless 2025 · OFFLINE · EOX / Copernicus"
-                            } else {
-                                "Sentinel-2 Cloudless 2025 · ONLINE · EOX / Copernicus"
+                            when (baseMapMode) {
+                                BaseMapMode.SATELLITE_OFFLINE ->
+                                    "Sentinel-2 Cloudless 2025 · OFFLINE · EOX / Copernicus"
+                                BaseMapMode.SATELLITE_ONLINE ->
+                                    "Sentinel-2 Cloudless 2025 · ONLINE · EOX / Copernicus"
+                                BaseMapMode.MAPTILER_HD ->
+                                    "MapTiler Satellite Hybrid · HD · ONLINE"
+                                BaseMapMode.MAP -> ""
                             },
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
@@ -496,6 +510,42 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                 }
             },
             onExtract = vm::extractOfflineRegion
+        )
+    }
+
+    if (showImageryDialog) {
+        ImageryProviderDialog(
+            currentMode = baseMapMode,
+            mapTilerApiKey = mapTilerApiKey,
+            mapTilerPrintAllowed = mapTilerPrintAllowed,
+            validating = mapTilerValidationActive,
+            onDismiss = { showImageryDialog = false },
+            onUseSentinel = {
+                baseMapMode = BaseMapMode.SATELLITE_ONLINE
+                showImageryDialog = false
+            },
+            onUseMapTiler = {
+                if (mapTilerApiKey.isNotBlank()) {
+                    baseMapMode = BaseMapMode.MAPTILER_HD
+                    showImageryDialog = false
+                } else {
+                    vm.notifyUser("Configura primero una API key válida de MapTiler.")
+                }
+            },
+            onSaveMapTiler = { key, printAllowed ->
+                vm.saveMapTilerSettings(key, printAllowed) { ok ->
+                    if (ok) {
+                        baseMapMode = BaseMapMode.MAPTILER_HD
+                        showImageryDialog = false
+                    }
+                }
+            },
+            onClearMapTiler = {
+                vm.clearMapTilerSettings()
+                if (baseMapMode == BaseMapMode.MAPTILER_HD) {
+                    baseMapMode = BaseMapMode.MAP
+                }
+            }
         )
     }
 
