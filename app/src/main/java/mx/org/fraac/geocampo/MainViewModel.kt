@@ -480,7 +480,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         title: String,
         note: String,
         category: WaypointCategory,
-        photoPath: String?
+        photoPaths: List<String>
     ) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -491,22 +491,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     category,
                     coord,
                     accuracy,
-                    photoPath
+                    photoPaths
                 )
             }
             refreshWaypoints()
             _message.value =
-                if (photoPath != null) "Punto y evidencia fotográfica guardados"
-                else "Ubicación georreferenciada"
+                if (photoPaths.isNotEmpty()) {
+                    "Punto y ${photoPaths.size} evidencia(s) fotográfica(s) guardados"
+                } else {
+                    "Ubicación georreferenciada"
+                }
         }
     }
 
     fun deleteWaypoint(id: Long) {
         viewModelScope.launch {
-            val photo = _waypoints.value.firstOrNull { it.id == id }?.photoPath
+            val photos = _waypoints.value
+                .firstOrNull { it.id == id }
+                ?.photoPaths
+                .orEmpty()
             withContext(Dispatchers.IO) {
                 db.deleteWaypoint(id)
-                photo?.let { runCatching { File(it).delete() } }
+                photos.forEach { path -> runCatching { File(path).delete() } }
             }
             if (_navigationTarget.value?.id == id) _navigationTarget.value = null
             refreshWaypoints()
