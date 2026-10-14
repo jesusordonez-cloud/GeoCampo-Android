@@ -2,6 +2,7 @@ package mx.org.fraac.geocampo
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -67,10 +68,22 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     var showBasemapDialog by remember { mutableStateOf(false) }
     var showLayersDialog by remember { mutableStateOf(false) }
     var showSatelliteOfflineDialog by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var showPrintDialog by remember { mutableStateOf(false) }
+    var selectedWaypoint by remember { mutableStateOf<Waypoint?>(null) }
+
     var baseMapMode by remember { mutableStateOf(BaseMapMode.MAP) }
     var centerOnLocationToken by remember { mutableIntStateOf(0) }
+    val snapshotBridge = remember { MapSnapshotBridge() }
+
     var pendingWaypoint by remember { mutableStateOf<Pair<GeoCoord, Float?>?>(null) }
-    var pendingPhotoPath by remember { mutableStateOf<String?>(null) }
+    val pendingPhotoPaths = remember { mutableStateListOf<String>() }
+    var capturingPhotoPath by remember { mutableStateOf<String?>(null) }
+
+    var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
+    var pendingReportData by remember { mutableStateOf<PrintReportData?>(null) }
+    var pendingReportBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
