@@ -14,6 +14,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import org.maplibre.android.annotations.Icon
 import org.maplibre.android.annotations.IconFactory
+import org.maplibre.android.annotations.Marker
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.annotations.PolygonOptions
 import org.maplibre.android.annotations.PolylineOptions
@@ -39,6 +40,15 @@ enum class BaseMapMode {
     SATELLITE_OFFLINE
 }
 
+class MapSnapshotBridge {
+    internal var capture: (((Bitmap?) -> Unit) -> Unit)? = null
+
+    fun request(callback: (Bitmap?) -> Unit) {
+        val current = capture
+        if (current == null) callback(null) else current(callback)
+    }
+}
+
 @Suppress("DEPRECATION")
 @Composable
 fun OfflineMapView(
@@ -50,12 +60,16 @@ fun OfflineMapView(
     satelliteOffline: PmTilesBasemap?,
     baseMapMode: BaseMapMode,
     centerOnLocationToken: Int,
+    snapshotBridge: MapSnapshotBridge,
     modifier: Modifier = Modifier,
-    onLongPress: (GeoCoord) -> Unit
+    onLongPress: (GeoCoord) -> Unit,
+    onWaypointSelected: (Waypoint) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val longPressCallback by rememberUpdatedState(onLongPress)
+    val waypointCallback by rememberUpdatedState(onWaypointSelected)
+    val markerWaypoints = remember { mutableMapOf<Long, Waypoint>() }
 
     val mapView = remember {
         MapView(context).apply {
@@ -99,11 +113,24 @@ fun OfflineMapView(
                     }
                 }
             )
+            readyMap.setOnMarkerClickListener(
+                object : MapLibreMap.OnMarkerClickListener {
+                    override fun onMarkerClick(marker: Marker): Boolean {
+                        val waypoint = markerWaypoints[marker.id] ?: return false
+                        waypointCallback(waypoint)
+                        return true
+                    }
+                }
+            )
+            snapshotBridge.capture = { callback ->
+                readyMap.snapshot { bitmap -> callback(bitmap) }
+            }
         }
 
         onDispose {
             lifecycle.removeObserver(observer)
             mapView.onPause()
+            snapshotBridge.capture = null
             mapView.onStop()
             mapView.onDestroy()
         }
@@ -132,6 +159,14 @@ fun OfflineMapView(
                     centeredBasemapPath = activeBase.path
                 }
             }
+
+            if (
+                baseMapMode != BaseMapMode.MAP &&
+                basemap?.isVector == true
+            ) {
+                runCatching { addHybridRoadOverlay(style, basemap) }
+            }
+
             styleEpoch++
         }
     }
@@ -152,7 +187,8 @@ fun OfflineMapView(
             layers = layers,
             waypoints = waypoints,
             trackPoints = trackPoints,
-            currentFix = currentFix
+            currentFix = currentFix,
+            markerWaypoints = markerWaypoints
         )
 
         if (basemap == null && centeredBasemapPath == null) {
@@ -258,6 +294,49 @@ private fun addPmTilesBasemap(style: Style, basemap: PmTilesBasemap) {
     )
 }
 
+private fun addHybridRoadOverlay(style: Style, basemap: PmTilesBasemap) {
+    if (!basemap.isVector) return
+
+    val sourceId = "geocampo-hybrid-vector"
+    style.addSource(
+        VectorSource(
+            sourceId,
+            "pmtiles://file://${basemap.path}"
+        )
+    )
+
+    style.addLayer(
+        LineLayer("hybrid-roads-casing", sourceId).apply {
+            setSourceLayer("roads")
+            setProperties(
+                lineColor(Color.WHITE),
+                lineWidth(5.2f),
+                lineOpacity(0.86f)
+            )
+        }
+    )
+    style.addLayer(
+        LineLayer("hybrid-roads", sourceId).apply {
+            setSourceLayer("roads")
+            setProperties(
+                lineColor(Color.rgb(246, 178, 66)),
+                lineWidth(2.5f),
+                lineOpacity(0.96f)
+            )
+        }
+    )
+    style.addLayer(
+        LineLayer("hybrid-boundaries", sourceId).apply {
+            setSourceLayer("boundaries")
+            setProperties(
+                lineColor(Color.rgb(255, 255, 255)),
+                lineWidth(1.2f),
+                lineOpacity(0.82f)
+            )
+        }
+    )
+}
+
 @Suppress("DEPRECATION")
 private fun renderAnnotations(
     context: android.content.Context,
@@ -265,9 +344,11 @@ private fun renderAnnotations(
     layers: List<MapLayer>,
     waypoints: List<Waypoint>,
     trackPoints: List<TrackPoint>,
-    currentFix: TrackPoint?
+    currentFix: TrackPoint?,
+    markerWaypoints: MutableMap<Long, Waypoint>
 ) {
     map.removeAnnotations()
+    markerWaypoints.clear()
 
     val layerColors = listOf(
         Color.rgb(25, 110, 89),
@@ -332,15 +413,18 @@ private fun renderAnnotations(
             append(waypoint.category.label)
             if (waypoint.note.isNotBlank()) append(" · ${waypoint.note}")
             waypoint.accuracy?.let { append(" · ±${it.toInt()} m") }
-            if (waypoint.photoPath != null) append(" · Foto")
+            if (waypoint.photoPaths.isNotEmpty()) {
+                append(" · " + waypoint.photoPaths.size + " foto(s)")
+            }
         }
-        map.addMarker(
+        val marker = map.addMarker(
             MarkerOptions()
                 .position(LatLng(waypoint.lat, waypoint.lon))
                 .title(waypoint.title)
                 .snippet(details)
                 .icon(icon)
         )
+        markerWaypoints[marker.id] = waypoint
     }
 
     if (trackPoints.size >= 2) {
