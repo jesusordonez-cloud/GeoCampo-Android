@@ -606,6 +606,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}.${format.extension}"
     }
 
+    fun notifyUser(text: String) {
+        _message.value = text
+    }
+
     fun clearMessage() {
         _message.value = null
     }
