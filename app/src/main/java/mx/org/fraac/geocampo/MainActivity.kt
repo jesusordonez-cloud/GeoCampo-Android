@@ -112,10 +112,44 @@ private fun GeoCampoScreen(vm: MainViewModel) {
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
-        if (!success) {
-            vm.discardEvidence(pendingPhotoPath)
-            pendingPhotoPath = null
+        val path = capturingPhotoPath
+        if (success && path != null) {
+            if (!pendingPhotoPaths.contains(path)) {
+                pendingPhotoPaths.add(path)
+            }
+        } else {
+            vm.discardEvidence(path)
         }
+        capturingPhotoPath = null
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        val format = pendingExportFormat
+        if (uri != null && format != null) {
+            vm.exportProject(uri, format)
+        }
+        pendingExportFormat = null
+    }
+
+    val pdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        val data = pendingReportData
+        val bitmap = pendingReportBitmap
+        if (uri != null && data != null && bitmap != null) {
+            vm.generateReport(
+                uri = uri,
+                data = data,
+                mapBitmap = bitmap,
+                baseMapMode = baseMapMode,
+                currentFix = currentFix,
+                visibleLayerNames = layers.filter { it.visible }.map { it.name }
+            )
+        }
+        pendingReportData = null
+        pendingReportBitmap = null
     }
 
     LaunchedEffect(Unit) {
