@@ -302,8 +302,7 @@ object ShapefileExporter {
         charset: Charset
     ): ByteArray {
         val isNumeric = field.type == 'N' || field.type == 'F'
-        val clean = value.replace("", " ").replace("
-", " ")
+        val clean = value.replace("\r", " ").replace("\n", " ")
         var bytes = clean.toByteArray(charset)
 
         if (bytes.size > field.length) {
