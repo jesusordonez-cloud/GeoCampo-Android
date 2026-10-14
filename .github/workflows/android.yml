@@ -2,6 +2,8 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
   build:
@@ -60,6 +62,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GeoCampo-v0.5.0-Executive-GIS-debug-apk
+          name: GeoCampo-v0.5.1-MapTiler-HD-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
