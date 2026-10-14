@@ -2,6 +2,7 @@ package mx.org.fraac.geocampo
 
 import android.Manifest
 import android.app.Application
+import android.graphics.Bitmap
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -33,6 +34,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val db = TrackDatabase(context)
     private val importer = LayerImporter(context)
     private val exporter = ProjectExporter(context, db)
+    private val reportGenerator = GeoReportGenerator(context, db)
     private val regionExtractor = NativePmtilesExtractor(context)
     private val satelliteManager = SatelliteOfflineManager(context)
     private val fused = LocationServices.getFusedLocationProviderClient(context)
@@ -551,6 +553,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _message.value = "No se pudo exportar: ${it.message ?: "error desconocido"}"
             }
         }
+    }
+
+    fun generateReport(
+        uri: Uri,
+        data: PrintReportData,
+        mapBitmap: Bitmap,
+        baseMapMode: BaseMapMode,
+        currentFix: TrackPoint?,
+        visibleLayerNames: List<String>
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    reportGenerator.generate(
+                        uri = uri,
+                        data = data,
+                        mapBitmap = mapBitmap,
+                        projectId = _activeProjectId.value,
+                        baseMapMode = baseMapMode,
+                        currentFix = currentFix,
+                        visibleLayerNames = visibleLayerNames
+                    )
+                }
+            }.onSuccess {
+                _message.value = "Reporte PDF ejecutivo generado correctamente"
+            }.onFailure {
+                _message.value =
+                    "No se pudo generar el PDF: " +
+                    (it.message ?: "error desconocido")
+            }
+        }
+    }
+
+    fun reportSuggestedName(): String {
+        val base = activeProject()?.displayName?.ifBlank { "proyecto" } ?: "proyecto"
+        val safe = base.lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9áéíóúñ_-]+"), "_")
+            .trim('_')
+        return "geocampo_reporte_" +
+            safe.ifBlank { "proyecto" } + "_" +
+            SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date()) +
+            ".pdf"
     }
 
     fun exportSuggestedName(format: ExportFormat): String {
