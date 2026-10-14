@@ -567,19 +567,66 @@ private fun GeoCampoScreen(vm: MainViewModel) {
         )
     }
 
+    if (showExportDialog) {
+        ExportProjectDialog(
+            onDismiss = { showExportDialog = false },
+            onExport = { format ->
+                pendingExportFormat = format
+                showExportDialog = false
+                exportLauncher.launch(vm.exportSuggestedName(format))
+            }
+        )
+    }
+
+    if (showPrintDialog) {
+        val activeProject = projects.firstOrNull { it.id == activeProjectId }
+        PrintReportDialog(
+            defaultProjectName = activeProject?.displayName ?: "Proyecto GeoCampo",
+            defaultDescription = activeProject?.notes.orEmpty(),
+            onDismiss = { showPrintDialog = false },
+            onGenerate = { data ->
+                showPrintDialog = false
+                snapshotBridge.request { bitmap ->
+                    if (bitmap == null) {
+                        vm.notifyUser(
+                            "No fue posible capturar el mapa. Espera a que termine de cargar e inténtalo de nuevo."
+                        )
+                    } else {
+                        pendingReportData = data
+                        pendingReportBitmap = bitmap
+                        pdfLauncher.launch(vm.reportSuggestedName())
+                    }
+                }
+            }
+        )
+    }
+
+    selectedWaypoint?.let { waypoint ->
+        WaypointDetailsDialog(
+            waypoint = waypoint,
+            onDismiss = { selectedWaypoint = null }
+        )
+    }
+
     pendingWaypoint?.let { pair ->
-        WaypointDialog(
+        WaypointEvidenceDialog(
             coord = pair.first,
             accuracy = pair.second,
-            photoPath = pendingPhotoPath,
+            photoPaths = pendingPhotoPaths,
             onTakePhoto = {
                 val evidence = vm.createEvidencePhoto()
-                pendingPhotoPath = evidence.second
+                capturingPhotoPath = evidence.second
                 cameraLauncher.launch(evidence.first)
             },
+            onRemovePhoto = { path ->
+                pendingPhotoPaths.remove(path)
+                vm.discardEvidence(path)
+            },
             onDismiss = {
-                vm.discardEvidence(pendingPhotoPath)
-                pendingPhotoPath = null
+                capturingPhotoPath?.let(vm::discardEvidence)
+                capturingPhotoPath = null
+                pendingPhotoPaths.forEach(vm::discardEvidence)
+                pendingPhotoPaths.clear()
                 pendingWaypoint = null
             },
             onSave = { title, note, category ->
@@ -589,9 +636,10 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     title,
                     note,
                     category,
-                    pendingPhotoPath
+                    pendingPhotoPaths.toList()
                 )
-                pendingPhotoPath = null
+                pendingPhotoPaths.clear()
+                capturingPhotoPath = null
                 pendingWaypoint = null
             }
         )
