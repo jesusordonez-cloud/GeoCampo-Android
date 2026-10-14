@@ -236,6 +236,32 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     IconButton(onClick = { showLayersDialog = true }) {
                         Icon(Icons.Default.Layers, contentDescription = "Capas")
                     }
+                    Box {
+                        IconButton(onClick = { showMoreMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Herramientas")
+                        }
+                        DropdownMenu(
+                            expanded = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Exportar proyecto") },
+                                leadingIcon = { Icon(Icons.Default.IosShare, null) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showExportDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Reporte ejecutivo PDF") },
+                                leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showPrintDialog = true
+                                }
+                            )
+                        }
+                    }
                 }
             )
         },
@@ -261,7 +287,12 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                         onClick = {
                             withLocationPermission {
                                 vm.requestCurrentFix { coord, accuracy ->
-                                    if (coord != null) pendingWaypoint = coord to accuracy
+                                    if (coord != null) {
+                                        pendingPhotoPaths.forEach(vm::discardEvidence)
+                                        pendingPhotoPaths.clear()
+                                        capturingPhotoPath = null
+                                        pendingWaypoint = coord to accuracy
+                                    }
                                 }
                             }
                         },
