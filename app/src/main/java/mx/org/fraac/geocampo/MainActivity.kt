@@ -341,10 +341,16 @@ private fun GeoCampoScreen(vm: MainViewModel) {
                     satelliteOffline = satelliteOffline,
                     baseMapMode = baseMapMode,
                     centerOnLocationToken = centerOnLocationToken,
+                    snapshotBridge = snapshotBridge,
                     modifier = Modifier.fillMaxSize(),
                     onLongPress = { coord ->
-                        pendingPhotoPath = null
+                        pendingPhotoPaths.forEach(vm::discardEvidence)
+                        pendingPhotoPaths.clear()
+                        capturingPhotoPath = null
                         pendingWaypoint = coord to null
+                    },
+                    onWaypointSelected = { waypoint ->
+                        selectedWaypoint = waypoint
                     }
                 )
 
