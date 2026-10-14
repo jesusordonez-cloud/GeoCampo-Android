@@ -64,6 +64,15 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
             )""".trimIndent()
         )
         db.execSQL("CREATE INDEX idx_waypoints_project ON waypoints(project_id, ts)")
+        db.execSQL(
+            """CREATE TABLE waypoint_photos(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                waypoint_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )""".trimIndent()
+        )
+        db.execSQL("CREATE INDEX idx_waypoint_photos_waypoint ON waypoint_photos(waypoint_id, created_at)")
         db.execSQL("CREATE INDEX idx_tracks_project ON tracks(project_id, started_at)")
         db.execSQL("CREATE INDEX idx_projects_folder ON projects(folder_id, created_at)")
     }
@@ -98,6 +107,30 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
             )
             runCatching { db.execSQL("ALTER TABLE projects ADD COLUMN folder_id INTEGER") }
             runCatching { db.execSQL("CREATE INDEX idx_projects_folder ON projects(folder_id, created_at)") }
+        }
+        if (oldVersion < 4) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS waypoint_photos(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    waypoint_id INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )""".trimIndent()
+            )
+            runCatching {
+                db.execSQL("CREATE INDEX idx_waypoint_photos_waypoint ON waypoint_photos(waypoint_id, created_at)")
+            }
+            runCatching {
+                db.execSQL(
+                    """INSERT INTO waypoint_photos(waypoint_id,path,created_at)
+                       SELECT id,photo_path,ts FROM waypoints
+                       WHERE photo_path IS NOT NULL AND TRIM(photo_path) <> ''
+                       AND NOT EXISTS(
+                           SELECT 1 FROM waypoint_photos wp
+                           WHERE wp.waypoint_id=waypoints.id AND wp.path=waypoints.photo_path
+                       )""".trimIndent()
+                )
+            }
         }
     }
 
@@ -321,23 +354,43 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         category: WaypointCategory,
         coord: GeoCoord,
         accuracy: Float?,
-        photoPath: String? = null
-    ): Long =
-        writableDatabase.insertOrThrow(
-            "waypoints", null,
-            ContentValues().apply {
-                projectId?.let { put("project_id", it) }
-                put("title", title)
-                put("note", note)
-                put("category", category.name)
-                put("lat", coord.lat)
-                put("lon", coord.lon)
-                coord.altitude?.let { put("altitude", it) }
-                accuracy?.let { put("accuracy", it) }
-                put("ts", System.currentTimeMillis())
-                photoPath?.let { put("photo_path", it) }
+        photoPaths: List<String> = emptyList()
+    ): Long {
+        val now = System.currentTimeMillis()
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val waypointId = db.insertOrThrow(
+                "waypoints", null,
+                ContentValues().apply {
+                    projectId?.let { put("project_id", it) }
+                    put("title", title)
+                    put("note", note)
+                    put("category", category.name)
+                    put("lat", coord.lat)
+                    put("lon", coord.lon)
+                    coord.altitude?.let { put("altitude", it) }
+                    accuracy?.let { put("accuracy", it) }
+                    put("ts", now)
+                    photoPaths.firstOrNull()?.let { put("photo_path", it) }
+                }
+            )
+            photoPaths.distinct().forEachIndexed { index, path ->
+                db.insertOrThrow(
+                    "waypoint_photos", null,
+                    ContentValues().apply {
+                        put("waypoint_id", waypointId)
+                        put("path", path)
+                        put("created_at", now + index)
+                    }
+                )
             }
-        )
+            db.setTransactionSuccessful()
+            return waypointId
+        } finally {
+            db.endTransaction()
+        }
+    }
 
     @Synchronized
     fun getWaypoints(projectId: Long? = null, filterByProject: Boolean = false): List<Waypoint> {
@@ -363,7 +416,10 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                     altitude = if (c.isNull(7)) null else c.getDouble(7),
                     accuracy = if (c.isNull(8)) null else c.getFloat(8),
                     timestamp = c.getLong(9),
-                    photoPath = if (c.isNull(10)) null else c.getString(10)
+                    photoPaths = getWaypointPhotoPaths(
+                        c.getLong(0),
+                        if (c.isNull(10)) null else c.getString(10)
+                    )
                 )
             }
         }
@@ -371,12 +427,35 @@ class TrackDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     @Synchronized
+    fun getWaypointPhotoPaths(waypointId: Long, legacyPath: String? = null): List<String> {
+        val out = mutableListOf<String>()
+        readableDatabase.query(
+            "waypoint_photos",
+            arrayOf("path"),
+            "waypoint_id=?",
+            arrayOf(waypointId.toString()),
+            null, null, "created_at ASC"
+        ).use { c ->
+            while (c.moveToNext()) out += c.getString(0)
+        }
+        if (out.isEmpty() && !legacyPath.isNullOrBlank()) out += legacyPath
+        return out.distinct()
+    }
+
+    @Synchronized
     fun deleteWaypoint(id: Long) {
-        writableDatabase.delete("waypoints", "id=?", arrayOf(id.toString()))
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("waypoint_photos", "waypoint_id=?", arrayOf(id.toString()))
+            writableDatabase.delete("waypoints", "id=?", arrayOf(id.toString()))
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
     }
 
     companion object {
         private const val DB_NAME = "geocampo.db"
-        private const val DB_VERSION = 3
+        private const val DB_VERSION = 4
     }
 }
