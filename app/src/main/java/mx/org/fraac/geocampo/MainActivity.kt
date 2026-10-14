@@ -635,16 +635,27 @@ private fun GeoCampoScreen(vm: MainViewModel) {
             defaultDescription = activeProject?.notes.orEmpty(),
             onDismiss = { showPrintDialog = false },
             onGenerate = { data ->
-                showPrintDialog = false
-                snapshotBridge.request { bitmap ->
-                    if (bitmap == null) {
-                        vm.notifyUser(
-                            "No fue posible capturar el mapa. Espera a que termine de cargar e inténtalo de nuevo."
-                        )
-                    } else {
-                        pendingReportData = data
-                        pendingReportBitmap = bitmap
-                        pdfLauncher.launch(vm.reportSuggestedName())
+                if (
+                    baseMapMode == BaseMapMode.MAPTILER_HD &&
+                    !mapTilerPrintAllowed
+                ) {
+                    vm.notifyUser(
+                        "Tu configuración MapTiler no tiene habilitada la impresión/exportación. " +
+                            "Cambia a Sentinel/PMTiles para generar el PDF o activa esta autorización " +
+                            "solo si tu plan MapTiler la incluye."
+                    )
+                } else {
+                    showPrintDialog = false
+                    snapshotBridge.request { bitmap ->
+                        if (bitmap == null) {
+                            vm.notifyUser(
+                                "No fue posible capturar el mapa. Espera a que termine de cargar e inténtalo de nuevo."
+                            )
+                        } else {
+                            pendingReportData = data
+                            pendingReportBitmap = bitmap
+                            pdfLauncher.launch(vm.reportSuggestedName())
+                        }
                     }
                 }
             }
