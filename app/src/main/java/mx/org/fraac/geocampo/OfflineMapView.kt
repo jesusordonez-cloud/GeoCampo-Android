@@ -37,7 +37,8 @@ import org.maplibre.android.style.sources.VectorSource
 enum class BaseMapMode {
     MAP,
     SATELLITE_ONLINE,
-    SATELLITE_OFFLINE
+    SATELLITE_OFFLINE,
+    MAPTILER_HD
 }
 
 class MapSnapshotBridge {
@@ -59,6 +60,7 @@ fun OfflineMapView(
     currentFix: TrackPoint?,
     satelliteOffline: PmTilesBasemap?,
     baseMapMode: BaseMapMode,
+    mapTilerApiKey: String,
     centerOnLocationToken: Int,
     snapshotBridge: MapSnapshotBridge,
     modifier: Modifier = Modifier,
@@ -136,17 +138,28 @@ fun OfflineMapView(
         }
     }
 
-    LaunchedEffect(map, basemap?.path, satelliteOffline?.path, baseMapMode) {
+    LaunchedEffect(
+        map,
+        basemap?.path,
+        satelliteOffline?.path,
+        baseMapMode,
+        mapTilerApiKey
+    ) {
         val targetMap = map ?: return@LaunchedEffect
-        val styleJson =
-            if (baseMapMode == BaseMapMode.SATELLITE_ONLINE) SATELLITE_STYLE
-            else EMPTY_STYLE
+        val styleJson = when (baseMapMode) {
+            BaseMapMode.SATELLITE_ONLINE -> SATELLITE_STYLE
+            BaseMapMode.MAPTILER_HD ->
+                if (mapTilerApiKey.isBlank()) EMPTY_STYLE
+                else mapTilerHybridStyle(mapTilerApiKey)
+            else -> EMPTY_STYLE
+        }
 
         targetMap.setStyle(Style.Builder().fromJson(styleJson)) { style ->
             val activeBase = when (baseMapMode) {
                 BaseMapMode.MAP -> basemap
                 BaseMapMode.SATELLITE_OFFLINE -> satelliteOffline
-                BaseMapMode.SATELLITE_ONLINE -> null
+                BaseMapMode.SATELLITE_ONLINE,
+                BaseMapMode.MAPTILER_HD -> null
             }
 
             if (activeBase != null) {
@@ -161,7 +174,8 @@ fun OfflineMapView(
             }
 
             if (
-                baseMapMode != BaseMapMode.MAP &&
+                (baseMapMode == BaseMapMode.SATELLITE_ONLINE ||
+                    baseMapMode == BaseMapMode.SATELLITE_OFFLINE) &&
                 basemap?.isVector == true
             ) {
                 runCatching { addHybridRoadOverlay(style, basemap) }
@@ -528,6 +542,34 @@ private fun createLetterIcon(
 
 private fun withAlpha(color: Int, alpha: Int): Int =
     Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+
+private fun mapTilerHybridStyle(apiKey: String): String {
+    val escaped = apiKey
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
+    return """
+    {
+      "version": 8,
+      "name": "GeoCampo MapTiler HD",
+      "sources": {
+        "maptiler-hybrid": {
+          "type": "raster",
+          "url": "https://api.maptiler.com/maps/hybrid/256/tiles.json?key=$escaped",
+          "tileSize": 256,
+          "attribution": "© MapTiler © OpenStreetMap contributors"
+        }
+      },
+      "layers": [
+        {
+          "id": "maptiler-hybrid",
+          "type": "raster",
+          "source": "maptiler-hybrid"
+        }
+      ]
+    }
+    """.trimIndent()
+}
 
 private const val SATELLITE_STYLE =
     """{
